@@ -1,0 +1,99 @@
+.auto-react-menu-row,
+.auto-react-menu-emojis {
+    display: flex;
+    align-items: center;
+}
+
+.auto-react-menu-row {
+    justify-content: space-between;
+    gap: 1em;
+    width: 100%;
+}
+
+.auto-react-menu-emojis {
+    justify-content: flex-end;
+    gap: 0.375em;
+}
+
+[role="menuitem"]:has(.auto-react-menu-emojis) {
+    background: transparent !important;
+    cursor: default;
+}
+
+.auto-react-menu-emoji,
+.auto-react-channel-toggle {
+    position: relative;
+    display: grid;
+    padding: 0.25em;
+    place-items: center;
+    border: 0;
+    border-radius: 0.375em;
+    color: var(--text-muted);
+    background: var(--background-modifier-normal);
+    cursor: pointer;
+}
+
+:is([class^="layerContainer_"], [class*=" layerContainer_"], [class^="layer_"], [class*=" layer_"]):has(.auto-react-layer-content) {
+    z-index: 2147483647 !important;
+}
+
+.auto-react-menu-picker {
+    padding: 0.25em;
+}
+
+.auto-react-menu-picker [style*="--custom-emoji-sprite-size"] {
+    --custom-emoji-sprite-size: 1.5em !important;
+}
+
+.auto-react-channel-toggle span {
+    font-weight: 600;
+}
+
+.auto-react-menu-emoji:hover,
+.auto-react-channel-toggle:hover {
+    color: var(--text-normal);
+    background: var(--background-modifier-hover);
+}
+
+.auto-react-channel-toggle-ignored::after {
+    position: absolute;
+    width: 1.75em;
+    height: 0.2em;
+    border-radius: 1em;
+    background: var(--status-danger);
+    content: "";
+    transform: rotate(-45deg);
+}
+
+.auto-react-menu-emoji-preview,
+.auto-react-channel-toggle span {
+    grid-area: 1 / 1;
+    font-size: 1.5em;
+    line-height: 1;
+}
+
+.auto-react-menu-emoji-preview img {
+    display: block;
+    width: 1em;
+    height: 1em;
+}
+
+.auto-react-menu-emoji-remove {
+    grid-area: 1 / 1;
+    width: 1.5em;
+    height: 1.5em;
+    color: var(--status-danger) !important;
+    visibility: hidden;
+}
+
+.auto-react-menu-emoji-remove path {
+    fill: var(--status-danger) !important;
+}
+
+.auto-react-menu-emoji:hover .auto-react-menu-emoji-preview {
+    visibility: hidden;
+}
+
+.auto-react-menu-emoji:hover .auto-react-menu-emoji-remove {
+    visibility: visible;
+}
