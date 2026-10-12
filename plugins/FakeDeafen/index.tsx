@@ -10,15 +10,16 @@ import { findByProps } from "@webpack";
 import { Menu, React, UserStore } from "@webpack/common";
 
 const settings = definePluginSettings({
-  enabled: {
+  fakeDeafened: {
     type: OptionType.BOOLEAN,
     description: "Fake Deafen Status",
     default: false,
-    restartRequired: false,
+    onChange: syncFakeDeafen,
   },
 });
 
 let socket: any, originalSend: any, originalToggleMute: any;
+let active = false;
 let ChannelStore: any,
   SelectedChannelStore: any,
   MediaEngineStore: any,
@@ -39,8 +40,8 @@ function sendVoiceState(mute: boolean, deaf: boolean) {
   }
 }
 
-function setEnabled(enabled: boolean) {
-  settings.store.enabled = enabled;
+function syncFakeDeafen(enabled: boolean) {
+  if (!active) return;
   const muted = MediaEngineStore?.isMute() ?? false;
   if (enabled !== muted) originalToggleMute?.call(MediaEngineActions);
   else sendVoiceState(enabled, enabled);
@@ -52,8 +53,10 @@ const userContextPatch: NavContextMenuPatchCallback = (children, { user }) => {
     <Menu.MenuCheckboxItem
       id="fake-deafen-toggle"
       label="Fake Deafen"
-      checked={settings.store.enabled}
-      action={() => setEnabled(!settings.store.enabled)}
+      checked={settings.store.fakeDeafened}
+      action={() => {
+        settings.store.fakeDeafened = !settings.store.fakeDeafened;
+      }}
     />
   );
   const group =
@@ -70,7 +73,7 @@ export default definePlugin({
   settings,
 
   start() {
-    settings.store.enabled = false;
+    settings.store.fakeDeafened = false;
     ChannelStore = findByProps("getChannel", "getDMFromUserId");
     SelectedChannelStore = findByProps("getVoiceChannelId");
     MediaEngineStore = findByProps("isDeaf", "isMute");
@@ -80,26 +83,30 @@ export default definePlugin({
 
     originalSend = socket.send;
     socket.send = function (op: number, data: any, ...args: any[]) {
-      if (op === 4 && settings.store.enabled && data)
+      if (op === 4 && settings.store.fakeDeafened && data)
         data.self_mute = data.self_deaf = true;
       return originalSend.apply(this, [op, data, ...args]);
     };
 
     originalToggleMute = MediaEngineActions.toggleSelfMute;
     MediaEngineActions.toggleSelfMute = function (...args: any[]) {
-      if (settings.store.enabled && MediaEngineStore?.isMute())
-        return setEnabled(false);
+      if (settings.store.fakeDeafened && MediaEngineStore?.isMute()) {
+        settings.store.fakeDeafened = false;
+        return;
+      }
       return originalToggleMute.apply(this, args);
     };
 
     addContextMenuPatch("user-context", userContextPatch);
+    active = true;
   },
 
   stop() {
-    if (settings.store.enabled) setEnabled(false);
+    if (settings.store.fakeDeafened) settings.store.fakeDeafened = false;
     if (socket && originalSend) socket.send = originalSend;
     if (MediaEngineActions && originalToggleMute)
       MediaEngineActions.toggleSelfMute = originalToggleMute;
     removeContextMenuPatch("user-context", userContextPatch);
+    active = false;
   },
 });
