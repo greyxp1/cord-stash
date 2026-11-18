@@ -178,7 +178,7 @@ function ContextEmojiRow({ initialEmojis, channelId, onChange, initialIgnored = 
             event.preventDefault();
             event.stopPropagation();
         }}>
-            <span>Auto React</span>
+            <span>{onIgnoreChange ? "Auto React" : "Channel Auto React"}</span>
             <span className="auto-react-menu-emojis">
                 {emojis.map(emoji => (
                     <button key={emoji} type="button" className="auto-react-menu-emoji" aria-label={`Remove ${emoji}`}
@@ -232,7 +232,7 @@ function makeContextEmojiItem({ id, emojis, channelId, onChange, ignored, onIgno
     } />;
 }
 
-const userContextMenu: NavContextMenuPatchCallback = (children, { user }) => {
+const userContextMenu: NavContextMenuPatchCallback = (children, { user, channel }) => {
     const userId = user?.id;
     if (!userId) return;
     const { users, ignored } = settings.store.rules;
@@ -247,6 +247,7 @@ const userContextMenu: NavContextMenuPatchCallback = (children, { user }) => {
             })}
         </Menu.MenuGroup>
     );
+    if (channel?.isDM()) channelContextMenu(children, { channel });
 };
 
 const channelContextMenu: NavContextMenuPatchCallback = (children, { channel }) => {
@@ -280,6 +281,7 @@ export default definePlugin({
     },
     contextMenus: {
         "channel-context": channelContextMenu,
+        "gdm-context": channelContextMenu,
         "user-context": userContextMenu
     }
 });
