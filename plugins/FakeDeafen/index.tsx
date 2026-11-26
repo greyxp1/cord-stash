@@ -89,6 +89,18 @@ export default definePlugin({
   description: "Fake deafen yourself using native framework APIs",
   authors: [{ name: "greyxp1", id: 1233920168196046892n }],
   settings,
+  patches: [
+    {
+      find: "isSelfMutedTemporarily(),selfDeaf:",
+      replacement: {
+        match:
+          /(\i\.sessionId===\i)(?=\?\i\.merge\(\{selfMute:\i,selfDeaf:\i\}\))/,
+        replace: "$1&&!$self.isFakeDeafened()",
+      },
+    },
+  ],
+
+  isFakeDeafened: () => active && settings.store.fakeDeafened,
 
   start() {
     settings.store.fakeDeafened = false;
