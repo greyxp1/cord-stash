@@ -12,7 +12,9 @@
 
 .auto-react-menu-emojis {
     justify-content: flex-end;
+    flex-wrap: wrap;
     gap: 0.375em;
+    flex: 1;
 }
 
 [role="menuitem"]:has(.auto-react-menu-emojis) {

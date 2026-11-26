@@ -17,7 +17,7 @@ type Rules = {
 };
 
 const settings = definePluginSettings({
-    ignoreBots: { type: OptionType.BOOLEAN, description: "Ignore bot messages", default: true },
+    ignoreBots: { type: OptionType.BOOLEAN, description: "Ignore bot messages in channel rules", default: true },
     rules: {
         type: OptionType.CUSTOM,
         description: "Internal storage",
@@ -46,8 +46,22 @@ function setUserIgnored(userId: string, ignored: boolean): void {
     settings.store.rules = rules;
 }
 
-async function addReactions(channelId: string, messageId: string, emojis: EmojiList): Promise<void> {
-    for (const emoji of emojis) {
+let generation = 0;
+
+function getReactionEmojis(authorId: string, channelId: string, isBot: boolean): EmojiList | undefined {
+    const { users, channels, ignored } = settings.store.rules;
+    const user = users[authorId];
+    const channel = ignored[authorId] || isBot && settings.store.ignoreBots ? undefined : channels[channelId];
+    if (!user?.length) return channel;
+    if (!channel?.length) return user;
+    return [...new Set([...user, ...channel])];
+}
+
+async function addReactions(channelId: string, messageId: string, authorId: string, isBot: boolean): Promise<void> {
+    const batch = generation;
+    for (const emoji of getReactionEmojis(authorId, channelId, isBot) ?? []) {
+        if (batch !== generation) return;
+        if (!getReactionEmojis(authorId, channelId, isBot)?.includes(emoji)) continue;
         try {
             await RestAPI.put({
                 url: Constants.Endpoints.REACTION(channelId, messageId, emoji, "@me"),
@@ -55,15 +69,6 @@ async function addReactions(channelId: string, messageId: string, emojis: EmojiL
             });
         } catch (error) { console.error("[AutoReact] Failed to add reaction", error); }
     }
-}
-
-function getReactionEmojis(authorId: string, channelId: string): EmojiList | undefined {
-    const { users, channels, ignored } = settings.store.rules;
-    const user = users[authorId];
-    const channel = ignored[authorId] ? undefined : channels[channelId];
-    if (!user?.length) return channel;
-    if (!channel?.length) return user;
-    return [...new Set([...user, ...channel])];
 }
 
 type EmojiPayload = { id?: string | null; name?: string | null; optionallyDiverseSequence?: string; };
@@ -129,7 +134,7 @@ function ContextPickerButton({ onSelect, channelId, targetRef, tooltip }: {
                 <EmojiPicker channel={channel} closePopout={dismiss} onSelectEmoji={({ emoji }) => {
                     const value = emoji?.id && emoji.name
                         ? `${emoji.name}:${emoji.id}`
-                        : emoji?.optionallyDiverseSequence?.trim() || emoji?.name?.trim() || "";
+                        : emoji?.optionallyDiverseSequence;
                     dismiss();
                     if (value) onSelect(value);
                 }} />
@@ -213,38 +218,20 @@ function ContextEmojiRow({ initialEmojis, channelId, onChange, initialIgnored = 
     );
 }
 
-function makeContextEmojiItem({ id, emojis, channelId, onChange, ignored, onIgnoreChange }: {
-    id: string;
-    emojis: EmojiList;
-    channelId?: string;
-    onChange(emojis: EmojiList): void;
-    ignored?: boolean;
-    onIgnoreChange?(ignored: boolean): void;
-}) {
-    return <Menu.MenuItem id={id} label={
-        <ContextEmojiRow
-            initialEmojis={emojis}
-            channelId={channelId}
-            onChange={onChange}
-            initialIgnored={ignored}
-            onIgnoreChange={onIgnoreChange}
-        />
-    } />;
-}
-
 const userContextMenu: NavContextMenuPatchCallback = (children, { user, channel }) => {
     const userId = user?.id;
     if (!userId) return;
     const { users, ignored } = settings.store.rules;
     children.push(
         <Menu.MenuGroup>
-            {makeContextEmojiItem({
-                id: "auto-react-user-emojis",
-                emojis: users[userId] ?? [],
-                ignored: !!ignored[userId],
-                onChange: emojis => setEmojis("users", userId, emojis),
-                onIgnoreChange: ignored => setUserIgnored(userId, ignored)
-            })}
+            <Menu.MenuItem id="auto-react-user-emojis" label={
+                <ContextEmojiRow
+                    initialEmojis={users[userId] ?? []}
+                    initialIgnored={!!ignored[userId]}
+                    onChange={emojis => setEmojis("users", userId, emojis)}
+                    onIgnoreChange={ignored => setUserIgnored(userId, ignored)}
+                />
+            } />
         </Menu.MenuGroup>
     );
     if (channel?.isDM()) channelContextMenu(children, { channel });
@@ -255,12 +242,14 @@ const channelContextMenu: NavContextMenuPatchCallback = (children, { channel }) 
     if (!channelId) return;
     children.push(
         <Menu.MenuGroup>
-            {makeContextEmojiItem({
-                id: "auto-react-channel-emojis",
-                channelId,
-                emojis: settings.store.rules.channels[channelId] ?? [],
-                onChange: emojis => setEmojis("channels", channelId, emojis)
-            })}
+            <Menu.MenuItem id="auto-react-channel-emojis" label={
+                <ContextEmojiRow
+                    initialEmojis={settings.store.rules.channels[channelId] ?? []}
+                    channelId={channelId}
+                    onChange={emojis => setEmojis("channels", channelId, emojis)}
+                />
+            } />
+
         </Menu.MenuGroup>
     );
 };
@@ -270,13 +259,14 @@ export default definePlugin({
     description: "Automatically react to messages using configurable user and channel rules.",
     authors: [{ name: "greyxp1", id: 1233920168196046892n }],
     settings,
+    stop() {
+        generation++;
+    },
     flux: {
         MESSAGE_CREATE({ message, channelId, optimistic }) {
-            if (optimistic || !message?.id || settings.store.ignoreBots && message.author?.bot) return;
-            const authorId = message.author?.id;
-            if (!authorId) return;
-            const emojis = getReactionEmojis(authorId, channelId);
-            if (emojis?.length) void addReactions(channelId, message.id, emojis);
+            const authorId = message?.author?.id;
+            if (optimistic || !authorId || !message.id) return;
+            void addReactions(channelId, message.id, authorId, !!message.author.bot);
         }
     },
     contextMenus: {
