@@ -7,7 +7,14 @@ import {
 import { definePluginSettings } from "@api/Settings";
 import definePlugin, { OptionType } from "@utils/types";
 import { findByProps } from "@webpack";
-import { Menu, React, UserStore } from "@webpack/common";
+import {
+  ChannelStore,
+  MediaEngineStore,
+  Menu,
+  React,
+  SelectedChannelStore,
+  UserStore,
+} from "@webpack/common";
 
 const settings = definePluginSettings({
   fakeDeafened: {
@@ -20,21 +27,31 @@ const settings = definePluginSettings({
 
 let socket: any, originalSend: any, originalToggleMute: any;
 let active = false;
-let ChannelStore: any,
-  SelectedChannelStore: any,
-  MediaEngineStore: any,
-  MediaEngineActions: any;
+let MediaEngineActions: any;
 
 function sendVoiceState(mute: boolean, deaf: boolean) {
   const channelId = SelectedChannelStore?.getVoiceChannelId();
   if (!socket || !channelId) return;
+  const payload = {
+    guildId: ChannelStore?.getChannel(channelId)?.guild_id ?? null,
+    channelId,
+    selfMute: mute,
+    selfDeaf: deaf,
+    selfVideo: MediaEngineStore?.isVideoEnabled?.() ?? false,
+  };
   try {
-    socket.send(4, {
-      guild_id: ChannelStore?.getChannel(channelId)?.guild_id ?? null,
-      channel_id: channelId,
-      self_mute: mute,
-      self_deaf: deaf,
-    });
+    if (typeof socket.voiceStateUpdate === "function") {
+      socket.voiceStateUpdate(payload);
+    } else {
+      socket.send(4, {
+        guild_id: payload.guildId,
+        channel_id: payload.channelId,
+        self_mute: payload.selfMute,
+        self_deaf: payload.selfDeaf,
+        self_video: payload.selfVideo,
+        flags: 0,
+      });
+    }
   } catch (e) {
     console.error("[FakeDeafen]", e);
   }
@@ -42,7 +59,8 @@ function sendVoiceState(mute: boolean, deaf: boolean) {
 
 function syncFakeDeafen(enabled: boolean) {
   if (!active) return;
-  const muted = MediaEngineStore?.isMute() ?? false;
+  const muted =
+    MediaEngineStore?.isSelfMute?.() ?? MediaEngineStore?.isMute?.() ?? false;
   if (enabled !== muted) originalToggleMute?.call(MediaEngineActions);
   else sendVoiceState(enabled, enabled);
 }
@@ -74,23 +92,22 @@ export default definePlugin({
 
   start() {
     settings.store.fakeDeafened = false;
-    ChannelStore = findByProps("getChannel", "getDMFromUserId");
-    SelectedChannelStore = findByProps("getVoiceChannelId");
-    MediaEngineStore = findByProps("isDeaf", "isMute");
     MediaEngineActions = findByProps("toggleSelfMute", "toggleSelfDeaf");
     socket = findByProps("getSocket")?.getSocket();
     if (!socket) return;
 
     originalSend = socket.send;
     socket.send = function (op: number, data: any, ...args: any[]) {
-      if (op === 4 && settings.store.fakeDeafened && data)
+      if (op === 4 && settings.store.fakeDeafened && data?.channel_id)
         data.self_mute = data.self_deaf = true;
       return originalSend.apply(this, [op, data, ...args]);
     };
 
     originalToggleMute = MediaEngineActions.toggleSelfMute;
     MediaEngineActions.toggleSelfMute = function (...args: any[]) {
-      if (settings.store.fakeDeafened && MediaEngineStore?.isMute()) {
+      const muted =
+        MediaEngineStore?.isSelfMute?.() ?? MediaEngineStore?.isMute?.() ?? false;
+      if (settings.store.fakeDeafened && muted) {
         settings.store.fakeDeafened = false;
         return;
       }
