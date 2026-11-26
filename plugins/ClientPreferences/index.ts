@@ -5,6 +5,7 @@ import {
   FluxDispatcher,
   MediaEngineStore,
   NotificationSettingsStore,
+  UnsyncedUserSettingsStore,
 } from "@webpack/common";
 
 const logger = new Logger("ClientPreferences");
@@ -152,7 +153,12 @@ function applyPreferences() {
         };
     });
     applyPreference("channel switch warning", () => {
-      if (typeof prefs.channelSwitchWarning !== "boolean") return;
+      if (
+        typeof prefs.channelSwitchWarning !== "boolean" ||
+        UnsyncedUserSettingsStore.disableVoiceChannelChangeAlert ===
+          !prefs.channelSwitchWarning
+      )
+        return;
       return {
         type: "UNSYNCED_USER_SETTINGS_UPDATE",
         settings: {
