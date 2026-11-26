@@ -1,7 +1,8 @@
 import * as DataStore from "@api/DataStore";
+import { updateMessage } from "@api/MessageUpdater";
 import definePlugin from "@utils/types";
 import type { Message } from "@vencord/discord-types";
-import { FluxDispatcher, Menu, MessageActions, MessageStore, UserStore } from "@webpack/common";
+import { EditMessageStore, FluxDispatcher, Menu, MessageActions, MessageCache, MessageStore, UserStore } from "@webpack/common";
 
 type LocalEdits = Record<string, string>;
 
@@ -9,6 +10,7 @@ const DATASTORE_KEY = "LocalEdit_edits";
 
 let edits: LocalEdits = {};
 let editsReady = Promise.resolve();
+let active = false;
 let pendingLocalEdit: string | null = null;
 
 function loadEdits(value: unknown): LocalEdits {
@@ -16,25 +18,22 @@ function loadEdits(value: unknown): LocalEdits {
     return Object.fromEntries(Object.entries(value).filter(([, content]) => typeof content === "string"));
 }
 
-function storeEdit(channelId: string, messageId: string, content?: string): Message | undefined {
-    const original = MessageStore.getMessage(channelId, messageId);
-    const isReset = content === undefined || content === original?.content;
-
-    if (isReset) delete edits[messageId];
+function storeEdit(channelId: string, messageId: string, content?: string) {
+    if (content === undefined || content === MessageStore.getMessage(channelId, messageId)?.content) delete edits[messageId];
     else edits[messageId] = content;
 
-    void DataStore.set(DATASTORE_KEY, { ...edits }).catch(error => {
+    void DataStore.set(DATASTORE_KEY, edits).catch(error => {
         console.error("[LocalEdit] Failed to save local edits", error);
     });
 
-    return original;
+    updateMessage(channelId, messageId);
 }
 
 export default definePlugin({
     name: "LocalEdit",
     description: "Locally edit messages sent by others in chat. Edits are only visible to you.",
     authors: [{ name: "greyxp1", id: 1233920168196046892n }],
-    dependencies: ["MessageEventsAPI"],
+    dependencies: ["MessageUpdaterAPI"],
     patches: [
         {
             find: '.CUSTOM_GIFT?""',
@@ -45,12 +44,20 @@ export default definePlugin({
         }
     ],
     start() {
+        active = true;
         editsReady = DataStore.get(DATASTORE_KEY).then(
-            value => { edits = loadEdits(value); },
+            value => {
+                if (!active) return;
+                edits = loadEdits(value);
+                for (const channelId in MessageCache._channelMessages) {
+                    for (const messageId in edits) updateMessage(channelId, messageId);
+                }
+            },
             error => { console.error("[LocalEdit] Failed to load local edits", error); }
         );
     },
     stop() {
+        active = false;
         pendingLocalEdit = null;
     },
     flux: {
@@ -62,21 +69,21 @@ export default definePlugin({
         if (pendingLocalEdit !== messageId) return;
         pendingLocalEdit = null;
 
-        const original = storeEdit(channelId, messageId, message.content);
+        storeEdit(channelId, messageId, message.content);
 
+        // Let the textarea finish handling the cancelled submit before closing it.
         setTimeout(() => {
-            FluxDispatcher.dispatch({ type: "MESSAGE_END_EDIT", channelId });
-            if (original) FluxDispatcher.dispatch({ type: "MESSAGE_UPDATE", message: original });
-        }, 0);
+            if (EditMessageStore.isEditing(channelId, messageId)) {
+                FluxDispatcher.dispatch({ type: "MESSAGE_END_EDIT", channelId });
+            }
+        });
 
         return { cancel: true };
     },
     contextMenus: {
         "message": (children, { message }) => {
             if (!message?.id || !message.channel_id) return;
-
-            const currentUserId = UserStore.getCurrentUser()?.id;
-            if (message.author?.id === currentUserId) return;
+            if (message.author?.id === UserStore.getCurrentUser()?.id) return;
 
             const isEdited = edits[message.id] !== undefined;
             children.push(
@@ -86,6 +93,7 @@ export default definePlugin({
                         label={isEdited ? "Edit Locally Again" : "Edit Locally"}
                         action={async () => {
                             await editsReady;
+                            if (!active) return;
                             pendingLocalEdit = message.id;
                             MessageActions.startEditMessage(
                                 message.channel_id,
@@ -100,8 +108,7 @@ export default definePlugin({
                             label="Reset Local Edit"
                             action={async () => {
                                 await editsReady;
-                                const original = storeEdit(message.channel_id, message.id);
-                                if (original) FluxDispatcher.dispatch({ type: "MESSAGE_UPDATE", message: original });
+                                if (active) storeEdit(message.channel_id, message.id);
                             }}
                         />
                     )}
@@ -110,10 +117,7 @@ export default definePlugin({
         }
     },
     applyLocalEdit(message: Message): Message {
-        if (!message || edits[message.id] === undefined) return message;
-
-        return Object.assign(Object.create(Object.getPrototypeOf(message)), message, {
-            content: edits[message.id]
-        });
+        const content = message && edits[message.id];
+        return content === undefined ? message : message.merge({ content });
     }
 });
