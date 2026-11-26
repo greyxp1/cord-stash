@@ -11,6 +11,11 @@ const prefix = "Discord Popout: ";
 const popouts = new Map<Window, () => void>();
 let pending: { key: string; cancelled: boolean; window?: Window; } | undefined;
 
+declare const documentPictureInPicture: {
+    window: Window | null;
+    requestWindow(options: { width: number; height: number; }): Promise<Window>;
+};
+
 function cancelPending() {
     if (pending) pending.cancelled = true;
 }
@@ -57,10 +62,13 @@ function updatePopouts() {
         watchTitle();
         popouts.set(win, () => {
             observer.disconnect();
+            try {
+                win.removeEventListener("load", watchTitle);
+            } catch {
+                // Cross-origin windows reject listener access.
+            }
             const document = getDocument(win);
-            if (!document) return;
-            win.removeEventListener("load", watchTitle);
-            if (document.title.startsWith(prefix)) {
+            if (document?.title.startsWith(prefix)) {
                 document.title = document.title.slice(prefix.length);
             }
         });
@@ -69,7 +77,7 @@ function updatePopouts() {
 
 export default definePlugin({
     name: "DiscordPopoutTitle",
-    description: "Marks Discord popout titles for window manager rules.",
+    description: "Opens browser popouts as Picture-in-Picture windows and marks popout titles for window manager rules.",
     authors: [{ name: "greyxp1", id: 1233920168196046892n }],
     patches: [
         {
@@ -104,9 +112,10 @@ export default definePlugin({
         features: { width?: number; height?: number; defaultWidth?: number; defaultHeight?: number; };
     }) {
         const { key, features } = action;
-        if (PopoutWindowStore.getWindowOpen(key)) return FluxDispatcher.dispatch(action);
-        if (pending) return;
-        if (!navigator.userActivation.isActive) return FluxDispatcher.dispatch(action);
+        if (pending?.key === key) return;
+        // Only one PiP window can exist, so other popouts use Discord's normal popup.
+        if (PopoutWindowStore.getWindowOpen(key) || pending || documentPictureInPicture.window
+            || !navigator.userActivation.isActive) return FluxDispatcher.dispatch(action);
         const request = pending = { key, cancelled: false, window: undefined as Window | undefined };
         const title = document.title;
         const markedTitle = prefix + title;
@@ -117,11 +126,7 @@ export default definePlugin({
             try {
                 const state = PopoutWindowStore.getWindowState(key);
                 // Chromium supplies the opener's title when it creates a Document PiP window.
-                win = request.window = await (window as Window & {
-                    documentPictureInPicture: {
-                        requestWindow(options: { width: number; height: number; }): Promise<Window>;
-                    };
-                }).documentPictureInPicture.requestWindow({
+                win = request.window = await documentPictureInPicture.requestWindow({
                     width: state?.width || features.defaultWidth || features.width || 1024,
                     height: state?.height || features.defaultHeight || features.height || 576
                 });
